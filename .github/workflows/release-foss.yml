@@ -44,15 +44,28 @@ jobs:
                   sudo rm -f /swapfile
                 fi
 
-                sudo fallocate -l 6G /swapfile
+                sudo fallocate -l 8G /swapfile
                 sudo chmod 600 /swapfile
                 sudo mkswap /swapfile
                 sudo swapon /swapfile
                 free -h
 
             - name: Build APK with Gradle
-              run: ./gradlew :app:assembleProdWebsiteRelease --no-daemon --max-workers=2
-              # run: ./gradlew :app:assembleProdWebsiteRelease
+              # Skip lintVital (separate JVM, ~8 min, heavy RAM) and cap workers to 1
+              # to lower peak memory so the runner is not reclaimed during R8/shrinking.
+              # Retry loop covers transient task failures (not a runner shutdown).
+              run: |
+                for attempt in 1 2 3; do
+                  if ./gradlew :app:assembleProdWebsiteRelease --no-daemon --max-workers=1 -x :app:lintVitalProdWebsiteRelease; then
+                    break
+                  fi
+                  if [ "$attempt" -eq 3 ]; then
+                    echo "Build failed after $attempt attempts."
+                    exit 1
+                  fi
+                  echo "Build attempt $attempt failed, retrying in 20s..."
+                  sleep 20
+                done
 
             - name: List merged manifest files
               run: find app/build/intermediates/merged_manifests/ -name "AndroidManifest.xml"
